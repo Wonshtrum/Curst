@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include "curst.h"
+#include "fmt.h"
 
 #define Test(A, B) (\
         _default_pretty(Test, A, B)\
@@ -72,6 +73,8 @@
 #define MANY_VISITOR_FOR Vec(Vec(i32))
 #define VISITOR debug
 #include "derive.h"
+#define VISITOR fmt
+#include "derive.h"
 #define VISITOR clone
 #include "derive.h"
 #define VISITOR eq
@@ -100,39 +103,33 @@ _declare(DoubleOption(i32));
 //     return res;
 // }
 
-#include <stdarg.h>
-int vprintf(const char*, va_list);
-void *memcpy(void*, const void*, long unsigned int);
-int debug_printf(const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-    const char *p = format;
-    char buffer[512];
-    while (*p) {
-        if (p[0] == '%' && p[1] == '?') {
-            int len = p++-format;
-            memcpy(buffer, format, len);
-            buffer[len] = 0;
-            vprintf(buffer, args);
-            auto(l, va_arg(args, ty(Lmd)));
-            Lmd_call(debug, l, 0);
-            format = p+1;
-        }
-        p++;
-    }
-    vprintf(format, args);
-    va_end(args);
-}
-
 ty(i32) main() {
+    auto(hello, Str_new("hello"));
+    ty(String) s = String_new();
+    Vec_extend(s, hello);
+    Vec_extend(s, Str_new(" world"));
+    Vec_push(s, '!');
+    Vec_push(s, 0);
+    printf("String { len: %d, cap: %d, ptr: \"%s\" }\n", s.len, s.cap, s.ptr);
+
     auto(vvi, Vec_new(Vec(i32)));
+    Vec_reserve(vvi, 1);
+    printf("len: %d, cap: %d, ptr: %d\n", vvi.len, vvi.cap, vvi.ptr);
+    Vec_reserve(vvi, 1);
+    Vec_push(vvi, Vec_new(i32));
+    printf("len: %d, cap: %d, ptr: %d\n", vvi.len, vvi.cap, vvi.ptr);
+    auto(v, vvi.ptr[0]);
+    printf("len: %d, cap: %d, ptr: %d\n", v.len, v.cap, v.ptr);
+    Vec_push(v, 32);
+    printf("len: %d, cap: %d, ptr: %d\n", v.len, v.cap, v.ptr);
+
     ty(Arr(i32, 4)) a4i = { 1, 2, 3, 4 };
     ty(Arr(Vec(i32), 2)) a2vi = {
-        { .len = 3, .cap = 4, .data = a4i },
-        { .len = 4, .cap = 4, .data = a4i },
+        { .len = 3, .cap = 4, .ptr = a4i },
+        { .len = 4, .cap = 4, .ptr = a4i },
     };
     vvi.len = 2;
-    vvi.data = a2vi;
+    vvi.ptr = a2vi;
     ty(i32) i = 4;
     ty(Ptr(i32)) pi = &i;
     printf("\n%s: %s", _pretty(Ptr(Ptr(Ptr(i32)))), _mangle_str(Ptr(Ptr(Ptr(i32)))));
@@ -142,7 +139,7 @@ ty(i32) main() {
     printf("\n%s: ", _mangle_str(Ptr(i32)));
     _visit(Ptr(i32), &pi, 0);
     printf("\n%s: ", _mangle_str(Vec(i32)));
-    _visit(Vec(i32), &vvi.data[0], 0);
+    _visit(Vec(i32), &vvi.ptr[0], 0);
     printf("\n%s: ", _mangle_str(Vec(Vec(i32))));
     _visit(Vec(Vec(i32)), &vvi, 0);
     printf("\n");
@@ -176,8 +173,17 @@ ty(i32) main() {
     ty(Lmd) l2 = Lmd_new(Vec(Vec(i32)), debug, &vvi);
     Lmd_call(debug, l2, 0);
 
-    printf("\nCall through formatter: ");
-    debug_printf("--%?--", l2);
+    printf("\nCall through formatter with Stdout sink: ");
+    ty(Lmd) l3 = Lmd_new(Vec(Vec(i32)), fmt, &vvi);
+    println("--%?--", l3);
+    printf("Call through formatter with String sink: ");
+    //String_clear(s);
+    s.len--;
+    auto(f, Formatter_new(String, &s));
+    _write_fmt(f, "--%?--", l3);
+    String_write_fmt(&s, "--%?--", l3);
+    Vec_push(s, 0);
+    printf("{ len: %d, cap: %d, ptr: %s }", s.len, s.cap, s.ptr);
 
     printf("\nCall through nested visitor: ");
     auto(res, Res_Ok(Vec(Vec(i32)), i32, vvi));

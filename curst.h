@@ -3,6 +3,7 @@
 
 #include "stdint.h"
 #include "stdio.h"
+#include "string.h"
 #include "do.h"
 
 //================================================
@@ -17,11 +18,12 @@ void __invalid_enum_tag(const char* file, int line, const char* base, const char
     fprintf(stderr, "\nPanic at %s:%d: tried to access enum %s (%s) with invalid variant %d\n", file, line, base, mangle, tag);
     exit(-1);
 }
-void __panic_at(const char* file, const char* line, const char* message) {
+void __panic_at(const char* file, int line, const char* message) {
     fflush(stdout);
-    fprintf(stderr, "\nPanic at %s:%d: %s\n", message);
+    fprintf(stderr, "\nPanic at %s:%d: %s\n", file, line, message);
     exit(-1);
 }
+#define panic(M) __panic_at(__FILE__, __LINE__, M)
 
 //================================================
 // Generic helpers
@@ -31,7 +33,7 @@ void __panic_at(const char* file, const char* line, const char* message) {
 #define __tail(H, ...) __VA_ARGS__
 #define __apply(M, ...) M(__VA_ARGS__)
 #define __split(...) __VA_ARGS__
-#define __stmt(...) do { __VA_ARGS__; } while(0)
+#define __stmt(...) do { __VA_ARGS__ } while(0)
 
 #define __str(...) __str_(__VA_ARGS__)
 #define __str_(...) #__VA_ARGS__
@@ -74,7 +76,7 @@ void __panic_at(const char* file, const char* line, const char* message) {
 #define _mangle(T) __mangle T
 #define _mangle_str(T) __str(__mangle T)
 #define _declare(T) typedef __type T __mangle T
-#define _visit(T, x, ...) __stmt(__cat2(__visitor_init_, VISITOR)(__type T, __VA_ARGS__); __follow(T, x))
+#define _visit(T, x, ...) __stmt(__cat2(__visitor_init_, VISITOR)(__type T, __VA_ARGS__); __follow(T, x);)
 #define _call(T, V, ...) __visit_derived(__mangle T, V)(__VA_ARGS__)
 // #define _sealed
 // #define _struct
@@ -109,6 +111,7 @@ void __panic_at(const char* file, const char* line, const char* message) {
 #define __shadow(T, var, x) __shadow_with(T, var, __##var, x)
 #define __shadow_with(T, var, __var, x) T __var = x; typeof(__var) var = __var
 #define __follow(T, path) __shadow(__split __type_ T*, this, path); __visitor T
+#define __type_check(T, x) (struct{ __type T __type_checked; }){ .__type_checked = (x) }.__type_checked
 
 //================================================
 // Type definition helpers
@@ -165,16 +168,20 @@ typedef uint32_t _u32;
 typedef uint64_t _u64;
 typedef struct __qp(,){} _unit;
 
-#define chr  ("char", false, c,   (char),     (__visit(chr)()))
-#define i8   ("i8",   false, i8,  (int8_t),   (__visit(i8)()))
-#define i16  ("i16",  false, i16, (int16_t),  (__visit(i16)()))
-#define i32  ("i32",  false, i32, (int32_t),  (__visit(i32)()))
-#define i64  ("i64",  false, i64, (int64_t),  (__visit(i64)()))
-#define u8   ("u8",   false, u8,  (uint8_t),  (__visit(u8)()))
-#define u16  ("u16",  false, u16, (uint16_t), (__visit(u16)()))
-#define u32  ("u32",  false, u32, (uint32_t), (__visit(u32)()))
-#define u64  ("u64",  false, u64, (uint64_t), (__visit(u64)()))
-#define unit ("()",   false, _unit, (_unit),  (__visit(unit)()))
+#define chr   ("char", false, c,   (char),     (__visit(chr)()))
+#define i8    ("i8",   false, i8,  (int8_t),   (__visit(i8)()))
+#define i16   ("i16",  false, i16, (int16_t),  (__visit(i16)()))
+#define i32   ("i32",  false, i32, (int32_t),  (__visit(i32)()))
+#define i64   ("i64",  false, i64, (int64_t),  (__visit(i64)()))
+#define isize ("usz",  false, i,   (ptrdiff_t),(__visit(isz)()))
+#define u8    ("u8",   false, u8,  (uint8_t),  (__visit(u8)()))
+#define u16   ("u16",  false, u16, (uint16_t), (__visit(u16)()))
+#define u32   ("u32",  false, u32, (uint32_t), (__visit(u32)()))
+#define u64   ("u64",  false, u64, (uint64_t), (__visit(u64)()))
+#define usize ("u64",  false, u,   (size_t),   (__visit(usz)()))
+#define f32   ("f32",  false, f32, (float),    (__visit(f32)()))
+#define f64   ("f64",  false, f64, (double),   (__visit(f64)()))
+#define unit  ("()",   false, _unit, (_unit),  (__visit(unit)()))
 
 // Wrapper around a C type
 #define Raw(T)
@@ -191,14 +198,26 @@ typedef struct __qp(,){} _unit;
 
 // Slice
 #define Slc(T) ("&[" __pretty T "]", false, __inline_struct(__qp(s, __mangle T),\
-        ({ int len; __type T *data; })),\
-        (__visit(Slc)(for (int i=0; i<this->len; i++) { __visit(Slc_item)(i, __follow(T, this->data+i)); })))
+        ({ int len; __type T *ptr; })),\
+        (__visit(Slc)(for (int i=0; i<this->len; i++) { __visit(Slc_item)(i, __follow(T, this->ptr+i)); })))
 
 // Vector
-// TODO: struct mVecT { int cap; union { struct { int len; mT* data; }; struct mSlcT { int len; mT* data; } as_slice; } };
 #define Vec(T) ("Vec<" __pretty T ">", false, __inline_struct(__qp(v, __mangle T),\
-        ({ int len; int cap; __type T *data; })),\
-        (__visit(Vec)(for (int i=0; i<this->len; i++) { __visit(Vec_item)(i, __follow(T, this->data+i)); })))
+        ({ int len; int cap; __type T *ptr; })),\
+        (__visit(Vec)(for (int i=0; i<this->len; i++) { __visit(Vec_item)(i, __follow(T, this->ptr+i)); })))
+
+// Str (char Slice)
+#define Str ("&str", false, __inline_struct(__qp(s, c),\
+        ({ int len; char *ptr; })),\
+        (__visit(Str)()))
+
+// String (char Vector)
+#define String ("String", false, __inline_struct(__qp(v, c),\
+        ({ int len; int cap; char *ptr; })),\
+        (__visit(String)()))
+
+// File
+#define File ("File", false, _f, (FILE), (__visit(File)()))
 
 // Option
 #define Opt(T) ("Opt<" __pretty T ">", false, __inline_struct(__qp(o, __mangle T),\
@@ -234,11 +253,30 @@ typedef struct __qp(,){} _unit;
 // Types methods
 //================================================
 
-#define __type_check(T, x) (struct{ __type T __type_checked; }){ .__type_checked = (x) }.__type_checked
+#define Vec_new(T) (ty(Vec(T))){ .len = 0, .cap = 0, .ptr = 0 }
+#define Vec_with_capacity(T, c) (ty(Vec(T))){ .len = 0, .cap = c, .ptr = malloc(c*sizeof(__type T)) }
+#define Vec_slice(T, v, a, b) (ty(Slc(T))){ .len = (b-a), .ptr = (v).ptr+a }
+// TODO: free elements
+#define Vec_clear(T, v) (v).len = 0
+#define Vec_reserve(v, c) __stmt(\
+        if ((v).cap == 0) (v).cap = 256;\
+        while ((v).cap < c) (v).cap*=2;\
+        if ((v).ptr = realloc((v).ptr, (v).cap*sizeof(*(v).ptr)));\
+        else panic("Vec realloc failed");)
+#define Vec_push(v, e) __stmt(\
+        Vec_reserve((v), 1);\
+        (v).ptr[(v).len++] = (e);)
+#define Vec_extend(v, s) __stmt(\
+        Vec_reserve((v), (v).len+(s).len);\
+        memcpy((v).ptr + (v).len, (s).ptr, (s).len*sizeof(*(s).ptr));\
+        (v).len += (s).len;)
+#define Slc_slice(x, a, b) (typeof(x)){ .len = (b-a), .ptr = (x).ptr+a }
 
-#define Vec_new(T) (ty(Vec(T))){ .len = 0, .cap = 0, .data = 0 }
-#define Vec_slice(T, x, a, b) (ty(Slc(T))){ .len = (b-a), .data = (x).data+a }
-#define Slc_slice(x, a, b) (typeof(x)){ .len = (b-a), .data = (x).data+a }
+#define String_new() (ty(String)){ .len = 0, .cap = 0, .ptr = 0 }
+#define String_with_capacity(c) (ty(String)){ .len = 0, .cap = c, .ptr = malloc(c) }
+#define String_clear(x) (x).len = 0
+#define Str_new(x) (ty(Str)){ .len = sizeof(x)-1, .ptr = (x) }
+#define Str_newz(x) (ty(Str)){ .len = strlen(x), .ptr = (char*)(x) }
 
 #define Opt_Some(T, x) (ty(Opt(T))){ .tag = Opt_Tag_Some, .as = { .Some = (x) } }
 #define Opt_None(T, x) (ty(Opt(T))){ .tag = Opt_Tag_None }
@@ -264,7 +302,7 @@ typedef struct __qp(,){} _unit;
 // Trait debug
 #define __visitor_sig_debug(T) void, T *this, int depth
 #define __visitor_names_debug() , this, depth
-#define __visitor_init_debug(T, d) int depth = d;
+#define __visitor_init_debug(T, d) int depth = (d)
 
 // Trait clone
 #define __visitor_sig_clone(T) T, T *this
@@ -275,7 +313,7 @@ typedef struct __qp(,){} _unit;
 #define __visitor_names_eq() res, this, other
 
 //================================================
-// Traits Implementation
+// Traits implementation
 //================================================
 
 // No trait short-circuit
@@ -283,6 +321,8 @@ typedef struct __qp(,){} _unit;
 #define Arr_VISITOR(...)
 #define Slc_VISITOR(...)
 #define Vec_VISITOR(...)
+#define Str_VISITOR(...)
+#define String_VISITOR(...)
 #define Tuple_VISITOR(...)
 #define Struct_VISITOR(...)
 #define Enum_VISITOR(...)
@@ -299,7 +339,7 @@ typedef struct __qp(,){} _unit;
 #define u32_debug( ) printf("%u", *this)
 #define u64_debug( ) printf("%u", *this)
 #define Nil_debug( ) printf("(nil)")
-#define Ptr_debug(V) if (*this) { printf("Ptr("); V; printf(")"); } else { Nil_debug(); }
+#define Ptr_debug(V) V
 
 #define Iter_debug(V) printf("[\n"); depth++; V; depth--; printf("%*.s]", depth*4, "")
 #define Iter_item_debug(i, V) printf("%*.s", depth*4, ""); V; printf(",\n")
@@ -309,6 +349,8 @@ typedef struct __qp(,){} _unit;
 #define Slc_item_debug(i, V) Iter_item_debug(i, V)
 #define Vec_debug(V) Iter_debug(V)
 #define Vec_item_debug(i, V) Iter_item_debug(i, V)
+#define Str_debug() printf("%.*s", this->len, this->ptr)
+#define String_debug() Str_debug()
 #define Tuple_debug(V) printf("( "); V; printf(")")
 #define Tuple_item_debug(i, V) Iter_item_debug(i, V)
 
@@ -322,8 +364,8 @@ typedef struct __qp(,){} _unit;
 #define i32_clone( ) ret = this
 #define Nil_clone( ) ret = NULL
 #define Ptr_clone(V) ret = this
-#define Vec_clone(V) //ret.len = this->len; ret.cap = this->len; ret.data = malloc(sizeof(*ret.data)*ret.len); V
-#define Vec_item_clone(i, V) typeof(ret) _ret = ret; typeof(*ret.data) ret; V; _ret.data[i] = ret;
+#define Vec_clone(V) //ret.len = this->len; ret.cap = this->len; ret.ptr = malloc(sizeof(*ret.ptr)*ret.len); V
+#define Vec_item_clone(i, V) typeof(ret) _ret = ret; typeof(*ret.ptr) ret; V; _ret.ptr[i] = ret;
 #define Tuple_clone(V)
 #define Tuple_item_clone(i, V)
 
